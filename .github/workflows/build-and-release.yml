@@ -1,5 +1,4 @@
-# .github/workflows/release.yml
-name: Rust Release Workflow
+name: Rust Build and Release Workflow
 
 on:
   workflow_call:
@@ -50,7 +49,6 @@ on:
       GITHUB_TOKEN:
         description: 'The GitHub token used to create releases.'
         required: true
-        type: string
 
 env:
   CARGO_TERM_COLOR: always

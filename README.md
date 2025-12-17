@@ -28,6 +28,8 @@ jobs:
       dry_run: false
       # 见: Swatinem/rust-cache@v2 (prefix_key)
       cache_prefix_key: "v0-rust"
+      # 构建包名 (要发布的可执行文件名)
+      package_name: "example-package"
     secrets:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
