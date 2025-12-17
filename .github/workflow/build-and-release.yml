@@ -1,0 +1,221 @@
+# .github/workflows/release.yml
+name: Rust Release Workflow
+
+on:
+  workflow_call:
+    inputs:
+      # 可以指定触发发布的 git ref (分支、标签或 SHA)
+      # 通常用于指定要构建和发布的分支，例如 'main'
+      ref:
+        description: 'The Git ref (branch, tag, or SHA) to checkout.'
+        required: false
+        type: string
+        default: ${{ github.ref }}
+
+      cache_prefix_key:
+        description: 'prefix_key in Swatinem/rust-cache@v2'
+        required: false
+        type: string
+        default: "v0-rust"
+
+      # 是否跳过信息任务
+      skip_info_job:
+        description: 'Whether to skip the information job.'
+        required: false
+        type: boolean
+        default: false
+
+      # 是否创建预发布
+      create_prerelease:
+        description: 'Whether to create a pre-release on GitHub.'
+        required: false
+        type: boolean
+        default: true
+
+      # 是否仅构建而不发布 (例如，只上传 artifact)
+      dry_run:
+        description: 'If true, artifacts will be built and uploaded, but no GitHub release will be created.'
+        required: false
+        type: boolean
+        default: false
+
+      # 用于重命名输出 artifact 的包名
+      package_name:
+        description: 'Package name to rename artifact'
+        required: true
+        type: string
+
+    secrets:
+      # 需要 GITHUB_TOKEN 来创建 GitHub Release
+      GITHUB_TOKEN:
+        description: 'The GitHub token used to create releases.'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  info:
+    name: Information
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_info_job }} # 根据输入决定是否运行
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }} # 使用输入来 checkout 对应的 ref
+
+    - name: Show dependency tree
+      run: cargo tree --verbose
+
+  release:
+    name: Build and Package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: ${{ inputs.package_name }}
+            asset_name: ${{ inputs.package_name }}-linux-x86_64-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: ${{ inputs.package_name }}
+            asset_name: ${{ inputs.package_name }}-linux-x86_64-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: ${{ inputs.package_name }}
+            asset_name: ${{ inputs.package_name }}-linux-aarch64-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            artifact_name: ${{ inputs.package_name }}
+            asset_name: ${{ inputs.package_name }}-linux-aarch64-musl
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: ${{ inputs.package_name }}
+            asset_name: ${{ inputs.package_name }}-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: ${{ inputs.package_name }}
+            asset_name: ${{ inputs.package_name }}-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-gnu
+            artifact_name: ${{ inputs.package_name }}.exe
+            asset_name: ${{ inputs.package_name }}-windows-x86_64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact_name: ${{ inputs.package_name }}.exe
+            asset_name: ${{ inputs.package_name }}-windows-arm64
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+
+    - name: Add target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: Cache Rust build
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ inputs.cache_prefix_key }}
+        shared-key: ${{ matrix.target }}
+
+    - name: Install cargo-zigbuild
+      if: matrix.os != 'windows-latest'
+      run: pip install cargo-zigbuild
+
+    - name: Install Zig
+      if: matrix.os != 'windows-latest'
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.13.0
+
+    - name: Build release binary (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: cargo zigbuild --release --target ${{ matrix.target }}
+
+    - name: Setup Clang (Windows ARM64)
+      if: matrix.os == 'windows-latest' && matrix.target == 'aarch64-pc-windows-msvc'
+      uses: egor-tensin/setup-clang@v1
+      with:
+        version: latest
+        platform: x64
+
+    - name: Install XWin (Windows ARM64)
+      if: matrix.os == 'windows-latest' && matrix.target == 'aarch64-pc-windows-msvc'
+      run: pip install cargo-xwin
+
+    - name: Build release binary (Windows ARM64)
+      if: matrix.os == 'windows-latest' && matrix.target == 'aarch64-pc-windows-msvc'
+      run: cargo xwin build --release --target ${{ matrix.target }}
+
+    - name: Build release binary (Other Windows)
+      if: matrix.os == 'windows-latest' && matrix.target != 'aarch64-pc-windows-msvc'
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Package Assets
+      id: package_step
+      shell: bash
+      run: |
+        STAGING="${{ matrix.asset_name }}"
+        mkdir -p "$STAGING"
+        cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" "$STAGING/"
+
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          7z a "$STAGING.zip" "$STAGING"
+          echo "asset_path=$STAGING.zip" >> $GITHUB_OUTPUT
+        else
+          tar -czf "$STAGING.tar.gz" "$STAGING"
+          echo "asset_path=$STAGING.tar.gz" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload binary as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name }}
+        path: ${{ steps.package_step.outputs.asset_path }}
+
+  create-prerelease:
+    name: Create Pre-release
+    needs: release # 确保在所有构建任务完成后运行
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # 只有当 create_prerelease 为 true 并且不是 dry_run 时才运行
+    if: ${{ inputs.create_prerelease && !inputs.dry_run }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }} # 使用输入来 checkout 对应的 ref
+
+    - name: Get version from Cargo.toml
+      id: get_version
+      run: |
+        VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$VERSION-pre.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.get_version.outputs.tag }}
+        name: Pre-release ${{ steps.get_version.outputs.tag }}
+        prerelease: true
+        make_latest: true
+        generate_release_notes: true
+        body: |
+          Automated pre-release build from commit ${{ github.sha }}
+
+          Version: ${{ steps.get_version.outputs.version }}
+          Build: ${{ github.run_number }}
+        files: |
+          artifacts/**/*.*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
