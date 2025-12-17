@@ -31,6 +31,6 @@ jobs:
       # 构建包名 (要发布的可执行文件名)
       package_name: "example-package"
     secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 ```
