@@ -15,6 +15,8 @@ jobs:
   build-and-release:
     name: Build and Release
     uses: azazo1/rust-workflows/.github/workflows/build-and-release.yml@main
+    permissions:
+      contents: write
     with:
       # Git ref (分支、标签或 SHA) 用于 checkout 代码。
       # 默认值: ${{ github.ref }} (触发当前工作流的 Git 引用)
