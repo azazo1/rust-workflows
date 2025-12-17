@@ -46,7 +46,7 @@ on:
 
     secrets:
       # 需要 GITHUB_TOKEN 来创建 GitHub Release
-      GITHUB_TOKEN:
+      GH_TOKEN:
         description: 'The GitHub token used to create releases.'
         required: true
 
@@ -216,4 +216,4 @@ jobs:
         files: |
           artifacts/**/*.*
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
